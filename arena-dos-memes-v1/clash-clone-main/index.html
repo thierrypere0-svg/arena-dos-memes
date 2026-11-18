@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Arena dos Memes</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            user-select: none;
+        }
+
+        body {
+            background: #111;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Arial Black', sans-serif;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            max-width: 420px;
+            max-height: 820px;
+            background: #2d4c1e;
+            border: 4px solid #333;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="game-container">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const W = 420;
+        const H = 820;
+        canvas.width = W;
+        canvas.height = H;
+
+        const arenaMargin = 30;
+        const arenaW = W - (arenaMargin * 2);
+        const arenaTop = 80;
+        const arenaBottom = 180;
+        const arenaH = H - arenaTop - arenaBottom;
+
+        const transition = {
+            active: false,
+            alpha: 0,
+            state: 'OUT', // 'OUT' (escondendo) ou 'IN' (revelando)
+            nextScreen: null,
+            speed: 0.15  // Velocidade. Aumente para mais rápido, diminua para mais suave
+        };
+
+        // --- NOVA VARIÁVEL DE ESTADO DE TELA ---
+        let currentScreen = 'MAIN_MENU'; // Começa no Menu
+
+        // --- SISTEMA DE FASES E TEMPO ---
+        let lastTime = Date.now();
+        let timeAccumulator = 0;
+        let gamePhase = 'NORMAL';
+
+        let gameState = {
+            elixir: 5,
+            timer: 180,
+            blueScore: 0,
+            redScore: 0,
+            battleDeck: [],
+            selectedCardId: null,
+            openingChestData: null
+        };
+
+        let playerData = {
+            userName: 'O Jotta',
+            level: 1,
+            exp: 49,
+            clan: null,
+            gold: 10,
+            diamant: 1000,
+            arena: 0,
+            crown: 0,
+            treinamento: true,
+            trofeus: 0,
+            wins: 2,
+            chest: [
+                {
+                    id: 1,
+                    name: 'Caixa Misteriosa',
+                    type: 'comum',
+                    status: 'WAITING',
+                    timer: 180,
+                    maxTime: 180
+                },
+            ],
+            deck: [
+                { id: 1, name: 'CLT Supremo', icon: '☕' },
+                { id: 2, name: 'Caramelo Tank', icon: '🐕' },
+                { id: 3, name: 'Arqueira BR', icon: '🏹' },
+                { id: 4, name: 'Chinelo Voador', icon: '🩴' },
+                { id: 5, name: 'Influencers', icon: '🤳' },
+                { id: 6, name: 'Dogão Raivoso', icon: '🐺' }
+            ],
+            // Adicione isso ao seu objeto playerData
+            allCards: [
+                { id: 1, name: 'CLT Supremo', icon: '☕' },
+                { id: 2, name: 'Caramelo Tank', icon: '🐕' },
+                { id: 3, name: 'Arqueira BR', icon: '🏹' },
+                { id: 4, name: 'Chinelo Voador', icon: '🩴' },
+                { id: 5, name: 'Influencers', icon: '🤳' },
+                { id: 6, name: 'Dogão Raivoso', icon: '🐺' },
+                { id: 7, name: 'Dona da Chinela', icon: '👵' },
+                { id: 8, name: 'Gigachad BR', icon: '🗿' },
+                { id: 9, name: 'Boletos', icon: '💀' },
+                { id: 10, name: 'Fiscal do Pix', icon: '📢' }
+            ],
+            selectedCardToSwap: null // Para controlar a lógica de substituição
+        };
+
+        const COLORS = {
+            grass1: '#6eb344', grass2: '#5e9c3a', river: '#309ec9', bridge: '#8b4513',
+            blue: '#2196F3', red: '#F44336', elixir: '#f50057', gold: '#FFD700',
+            uiBg: 'rgba(20, 20, 20, 0.95)',
+            menuBg1: '#1b4169', menuBg2: '#163657', loadingBar: '#4CAF50'
+        };
+
+        // --- ADICIONE ESTE OBJETO DE BOTÕES ---
+        const buttons = {
+            battle: { x: W / 2 - 100, y: H / 2 + 50, w: 200, h: 70 }
+        };
+
+        // --- CONFIGURAÇÃO DA TELA DE CARREGAMENTO ---
+        let loadingProgress = 0;
+        let opacity = 0; // Para efeito de fade in inicial
+        const bgLoading = new Image();
+        bgLoading.src = 'https://i.pinimg.com/736x/fd/7a/bf/fd7abf8e304a4f6042b5e77b91834c05.jpg'; // Nome do arquivo da montanha
+        // --- CARREGAMENTO DE IMAGENS DO BAÚ ---
+        const imgChestClosed = new Image();
+        imgChestClosed.src = 'assets/chests/comum_close.png';
+
+        const imgChestOpen = new Image();
+        imgChestOpen.src = 'assets/chests/comum_open.png';
+
+        const imgGold = new Image();
+        imgGold.src = 'assets/icons/gold_icon.png';
+
+        const imgGems = new Image();
+        imgGems.src = 'assets/icons/gem_icon.png';
+
+        const imgExp = new Image();
+        imgExp.src = 'assets/icons/exp_icon.png';
+
+        const TROOP_STATS = {
+            // --- TANQUES ---
+            'Caramelo Tank': {
+                hp: 3200, damage: 12, speed: 0.6, range: 45, cost: 5, icon: '🐕',
+                targetType: 'BUILDING', description: 'O tanque da quebrada. Vai direto nas torres.'
+            },
+            'Golem': {
+                hp: 5000, damage: 15, speed: 0.4, range: 50, cost: 8, icon: '🗿',
+                targetType: 'BUILDING', description: 'O maior tanque do jogo.'
+            },
+
+            // --- MINI TANQUES E DEFESA ---
+            'CLT Supremo': {
+                hp: 1450, damage: 18, speed: 0.9, range: 35, cost: 3, icon: '☕',
+                targetType: 'ALL', description: 'Bate ponto, toma café e segura a linha.'
+            },
+            'Dona da Chinela': {
+                hp: 1600, damage: 15, speed: 0.9, range: 40, cost: 4, icon: '👵',
+                targetType: 'ALL', description: 'A lenda da chinela. Ótima contra grupos.'
+            },
+
+            // --- SUPORTE E DISTÂNCIA ---
+            'Arqueira BR': {
+                hp: 250, damage: 10, speed: 1.0, range: 150, cost: 3, icon: '🏹',
+                targetType: 'ALL', description: 'Mira afiada e presença garantida no feed.'
+            },
+            'Fiscal do Pix': {
+                hp: 600, damage: 35, speed: 0.8, range: 180, cost: 4, icon: '📢',
+                targetType: 'ALL', description: 'Fiscaliza o Pix de longe e não perde um detalhe.'
+            },
+
+            // --- DANO PESADO (ANTI-TANQUE) ---
+            'Gigachad BR': {
+                hp: 1100, damage: 60, speed: 1.2, range: 35, cost: 4, icon: '🗿',
+                targetType: 'ALL', description: 'Queixo quadrado, golpe pesado e zero conversa.'
+            },
+
+            // --- HORDAS E VELOCIDADE ---
+            'Influencers': {
+                hp: 170, damage: 12, speed: 1.4, range: 30, cost: 2, icon: '🤳',
+                targetType: 'ALL', description: 'Chegam em bando e gravam tudo.'
+            },
+            'Boletos': {
+                hp: 70, damage: 7, speed: 1.1, range: 30, cost: 1, icon: '💀',
+                targetType: 'ALL', description: 'Contas vencidas que não deixam ninguém em paz.'
+            },
+            'Dogão Raivoso': {
+                hp: 450, damage: 22, speed: 1.6, range: 35, cost: 4, icon: '🐺',
+                targetType: 'ALL', description: 'Corre atrás da treta sem pensar duas vezes.'
+            },
+
+            // --- FEITIÇOS ---
+            'Chinelo Voador': {
+                hp: 1, damage: 180, speed: 0, range: 0, cost: 4, icon: '🩴',
+                targetType: 'AREA', description: 'Um chinelo certeiro que resolve a confusão em área.'
+            }
+        };
+
+        let troops = [];
+        let towers = [
+            { x: W / 2, y: arenaTop + 40, team: 'red', isKing: true, level: 10, hp: 2500, maxHp: 2500, isDestroyed: false },
+            { x: arenaMargin + arenaW * 0.15 + 25, y: arenaTop + 100, team: 'red', isKing: false, level: 10, hp: 1500, maxHp: 1500, isDestroyed: false },
+            { x: arenaMargin + arenaW * 0.85 - 25, y: arenaTop + 100, team: 'red', isKing: false, level: 10, hp: 1500, maxHp: 1500, isDestroyed: false },
+
+            { x: W / 2, y: arenaTop + arenaH - 40, team: 'blue', isKing: true, level: 9, hp: 2500, maxHp: 2500, isDestroyed: false },
+            { x: arenaMargin + arenaW * 0.15 + 25, y: arenaTop + arenaH - 100, team: 'blue', isKing: false, level: 9, hp: 1500, maxHp: 1500, isDestroyed: false },
+            { x: arenaMargin + arenaW * 0.85 - 25, y: arenaTop + arenaH - 100, team: 'blue', isKing: false, level: 9, hp: 1500, maxHp: 1500, isDestroyed: false }
+        ];
+
+        class Troop {
+            constructor(x, y, team, type) {
+                this.x = x; this.y = y; this.team = team; this.type = type;
+                this.stats = { ...TROOP_STATS[type] };
+                this.hp = this.stats.hp;
+                this.radius = 16;
+                this.target = null;
+            }
+
+            update() {
+                if (this.hp <= 0 || gamePhase === 'END') return;
+
+                // Filtra inimigos baseado no tipo de alvo da tropa
+                let enemies;
+                if (this.stats.targetType === 'BUILDING') {
+                    // Tropas tipo Gigante focam apenas em torres
+                    enemies = towers.filter(t => t.team !== this.team && t.hp > 0);
+                } else {
+                    // Tropas normais focam em tudo
+                    enemies = [
+                        ...towers.filter(t => t.team !== this.team && t.hp > 0),
+                        ...troops.filter(t => t.team !== this.team && t.hp > 0)
+                    ];
+                }
+
+                if (enemies.length === 0) return;
+
+                this.target = enemies.reduce((closest, current) => {
+                    return Math.hypot(this.x - closest.x, this.y - closest.y) < Math.hypot(this.x - current.x, this.y - current.y) ? closest : current;
+                });
+
+                const dist = Math.hypot(this.target.x - this.x, this.target.y - this.y);
+                if (dist > this.stats.range) {
+                    let moveX = this.target.x;
+                    let moveY = this.target.y;
+                    const riverY = arenaTop + arenaH / 2;
+                    const onMySide = (this.team === 'blue' && this.y > riverY) || (this.team === 'red' && this.y < riverY);
+                    const targetOnOtherSide = (this.team === 'blue' && this.target.y < riverY) || (this.team === 'red' && this.target.y > riverY);
+
+                    if (onMySide && targetOnOtherSide) {
+                        const leftBridgeX = arenaMargin + arenaW * 0.15 + 25;
+                        const rightBridgeX = arenaMargin + arenaW * 0.85 - 25;
+                        moveX = Math.abs(this.x - leftBridgeX) < Math.abs(this.x - rightBridgeX) ? leftBridgeX : rightBridgeX;
+                        moveY = riverY;
+                    }
+
+                    const angle = Math.atan2(moveY - this.y, moveX - this.x);
+                    this.x += Math.cos(angle) * this.stats.speed;
+                    this.y += Math.sin(angle) * this.stats.speed;
+                } else {
+                    this.target.hp -= this.stats.damage;
+                }
+
+                this.x = Math.max(arenaMargin + this.radius, Math.min(W - arenaMargin - this.radius, this.x));
+                this.y = Math.max(arenaTop + this.radius, Math.min(arenaTop + arenaH - this.radius, this.y));
+            }
+
+            draw() {
+                ctx.fillStyle = this.team === 'blue' ? COLORS.blue : COLORS.red;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fill();
+                ctx.strokeStyle = '#000'; ctx.lineWidth = 2; ctx.stroke();
+                ctx.fillStyle = 'white'; ctx.font = "16px Arial"; ctx.textAlign = "center";
+                ctx.fillText(this.stats.icon, this.x, this.y + 6);
+                ctx.fillStyle = 'black'; ctx.fillRect(this.x - 10, this.y - 22, 20, 4);
+                ctx.fillStyle = this.team === 'blue' ? '#4CAF50' : '#f44336';
+                ctx.fillRect(this.x - 10, this.y - 22, 20 * (Math.max(0, this.hp) / this.stats.hp), 4);
+            }
+        }
+
+        // --- FUNÇÃO PARA PROCESSAR O FIM DA PARTIDA ---
+        function endGame() {
+            if (gamePhase === 'END') return; // Evita rodar duas vezes
+            gamePhase = 'END';
+
+            const isVictory = gameState.blueScore > gameState.redScore;
+            const playerTowersLeft = towers.filter(t => t.team === 'blue' && t.hp > 0).length;
+            const totalCoroas = gameState.blueScore + playerTowersLeft;
+
+            // Cálculos de Recompensa
+            if (isVictory) {
+                const moedas = 150 + (totalCoroas * 10);
+
+                // Atualizando os dados do jogador (UMA ÚNICA VEZ)
+                playerData.wins += 1;
+                playerData.gold += moedas;
+                playerData.crown += totalCoroas;
+                playerData.exp += 30; // Ganha um pouco de exp
+                checkLevelUp();
+                playerData.trofeus += 30; // Ganha troféus
+
+                // Dar um baú se houver espaço
+                if (playerData.chest.length < 4) {
+                    // Novo baú ganho:
+                    playerData.chest.push({
+                        id: Date.now(),
+                        name: 'Caixa Misteriosa',
+                        type: 'comum',
+                        status: 'WAITING', // Começa esperando clique
+                        timer: 180,        // 3 minutos (em segundos)
+                        maxTime: 180       // Guardamos o total para a barra de progresso
+                    });
+                }
+
+                // Salva as moedas e coroas ganhas no gameState para a tela de resultados exibir
+                gameState.lastReward = { moedas, coroas: totalCoroas };
+
+            } else {
+                const moedas = 30 + (gameState.blueScore * 15);
+                playerData.gold += moedas;
+                playerData.crown += gameState.blueScore; // Só ganha as coroas que derrubou
+                playerData.trofeus = Math.max(0, playerData.trofeus - 20); // Perde troféus, mas não fica negativo
+                playerData.exp += 10; // Mesmo perdendo ganha um pouco de XP
+                checkLevelUp();
+
+                gameState.lastReward = { moedas, coroas: gameState.blueScore };
+            }
+        }
+
+        // --- LÓGICA DE GERENCIAMENTO DA PARTIDA ---
+        function checkTowers() {
+            towers.forEach(t => {
+                if (t.hp <= 0 && !t.isDestroyed) {
+                    t.isDestroyed = true;
+                    if (t.team === 'red') {
+                        gameState.blueScore += t.isKing ? 3 : 1;
+                        if (t.isKing) gameState.blueScore = 3;
+                    } else {
+                        gameState.redScore += t.isKing ? 3 : 1;
+                        if (t.isKing) gameState.redScore = 3;
+                    }
+                    if (gamePhase === 'OVERTIME' || gamePhase === 'TIEBREAKER' || t.isKing) {
+                        endGame(); // Chama a nova função aqui
+                    }
+                }
+            });
+        }
+
+        function updateGameLogic() {
+            let now = Date.now();
+            let dt = now - lastTime;
+            lastTime = now;
+
+            if (gamePhase === 'END') return;
+
+            if (gamePhase === 'NORMAL' || gamePhase === 'OVERTIME') {
+                timeAccumulator += dt;
+                if (timeAccumulator >= 1000) {
+                    gameState.timer--;
+                    timeAccumulator -= 1000;
+
+                    if (gameState.timer <= 0) {
+                        if (gamePhase === 'NORMAL') {
+                            if (gameState.blueScore !== gameState.redScore) {
+                                endGame(); // Chama a nova função aqui
+                            } else {
+                                gamePhase = 'OVERTIME';
+                                gameState.timer = 30;
+                            }
+                        } else if (gamePhase === 'OVERTIME') {
+                            gamePhase = 'TIEBREAKER';
+                        }
+                    }
+                }
+            }
+
+            if (gamePhase === 'TIEBREAKER') {
+                towers.forEach(t => {
+                    if (t.hp > 0) t.hp -= 5;
+                });
+            }
+
+            checkTowers();
+
+            if (gameState.elixir < 10) gameState.elixir += 0.02;
+        }
+
+        canvas.addEventListener('pointerdown', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = (e.clientX - rect.left) * (W / rect.width);
+            const y = (e.clientY - rect.top) * (H / rect.height);
+
+            // --- 1. CLIQUE NA NAVBAR (Global para todos os Menus) ---
+            // Ignoramos a NavBar apenas na Batalha, Loading e Animação do Baú
+            const isMenuScreen = !['BATTLE', 'LOADING', 'CHEST_ANIMATION'].includes(currentScreen);
+
+            if (isMenuScreen && y > H - 70) {
+                const navSpacing = W / 5;
+                const clickedIcon = Math.floor(x / navSpacing);
+                const navScreens = ['SHOP_MENU', 'DECK_MENU', 'MAIN_MENU', 'CLAN_MENU', 'EVENTS_MENU'];
+                const targetScreen = navScreens[clickedIcon];
+
+                // Só inicia a transição se for para uma tela diferente e se não estiver no meio de outra
+                if (targetScreen && targetScreen !== currentScreen && !transition.active) {
+                    transition.active = true;
+                    transition.state = 'OUT';
+                    transition.alpha = 0;
+                    transition.nextScreen = targetScreen;
+                    playerData.selectedCardToSwap = null; // Limpa seleções ao sair
+                }
+                return; // Interrompe para não clicar no que está atrás da barra
+            }
+
+            // --- 2. LÓGICA POR TELA ---
+
+            if (currentScreen === 'LOADING') {
+                const btnX = (W - 160) / 2;
+                const btnY = (H * 0.75) + 60;
+                if (x > btnX && x < btnX + 160 && y > btnY && y < btnY + 45) {
+                    loadingProgress = 0;
+                    currentScreen = 'MAIN_MENU';
+                }
+                return;
+            }
+
+            if (currentScreen === 'MAIN_MENU') {
+                // Botão Batalha central
+                const btnW = 200, btnH = 70;
+                const btnX = W / 2 - btnW / 2, btnY = H / 2 + 50;
+                if (x > btnX && x < btnX + btnW && y > btnY && y < btnY + btnH) {
+                    loadingProgress = 0;
+                    currentScreen = 'LOADING';
+                    return;
+                }
+
+                // Clique nos Baús
+                const slotW = 85, slotH = 110, slotY = 620;
+                const spacing = (W - (slotW * 4)) / 5;
+                if (y > slotY && y < slotY + slotH) {
+                    for (let i = 0; i < 4; i++) {
+                        let bx = spacing + i * (slotW + spacing);
+                        if (x > bx && x < bx + slotW) {
+                            const bau = playerData.chest[i];
+                            if (!bau) continue;
+                            if (bau.status === 'WAITING') {
+                                if (!playerData.chest.some(b => b.status === 'OPENING')) {
+                                    bau.status = 'OPENING';
+                                } else {
+                                    // Dica: use um texto na tela em vez de alert para não travar o jogo
+                                    console.log("Já existe um baú abrindo!");
+                                }
+                            } else if (bau.status === 'READY') {
+                                collectChest(i);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (currentScreen === 'DECK_MENU') {
+                const startX = 30, startY = 80, cardW = 80, cardH = 100, gap = 15;
+                // Seleção do Deck (8 cartas)
+                for (let i = 0; i < 8; i++) {
+                    const col = i % 4, row = Math.floor(i / 4);
+                    const bx = startX + col * (cardW + gap), by = startY + row * (cardH + gap);
+                    if (x > bx && x < bx + cardW && y > by && y < by + cardH) {
+                        playerData.selectedCardToSwap = i;
+                        return;
+                    }
+                }
+                // Seleção da Coleção
+                const collStartY = 380;
+                playerData.allCards.forEach((card, i) => {
+                    const col = i % 4, row = Math.floor(i / 4);
+                    const bx = startX + col * (cardW + gap), by = collStartY + row * (cardH + gap);
+                    if (x > bx && x < bx + cardW && y > by && y < by + cardH) {
+                        if (playerData.selectedCardToSwap !== null) {
+                            if (!playerData.deck.some(c => c.id === card.id)) {
+                                playerData.deck[playerData.selectedCardToSwap] = { ...card };
+                                playerData.selectedCardToSwap = null;
+                            }
+                        }
+                    }
+                });
+            }
+
+            if (currentScreen === 'BATTLE') {
+                const deckState = getDeckState();
+                if (gamePhase === 'END') {
+                    const btnY = H - 150, btnW = 160, btnH = 50;
+                    if (x > (W / 2 - btnW / 2) && x < (W / 2 + btnW / 2) && y > (btnY - btnH / 2) && y < (btnY + btnH / 2)) {
+                        resetGameToMenu();
+                    }
+                    return;
+                }
+
+                // Cartas na mão
+                if (y > H - 160) {
+                    deckState.hand.forEach((card, i) => {
+                        const cardX = 85 + (i * 82), cardY = H - 110;
+                        if (x >= cardX && x <= cardX + 75 && y >= cardY && y <= cardY + 100) {
+                            gameState.selectedCardId = card.id;
+                        }
+                    });
+                    return;
+                }
+
+                // Spawn de tropas na Arena
+                const riverY = arenaTop + arenaH / 2;
+                if (gameState.selectedCardId !== null && y > riverY && y < arenaTop + arenaH && x > arenaMargin && x < W - arenaMargin) {
+                    const card = gameState.battleDeck.find(c => c.id === gameState.selectedCardId);
+                    if (card && gameState.elixir >= card.cost) {
+                        troops.push(new Troop(x, y, 'blue', card.name));
+                        gameState.elixir -= card.cost;
+
+                        // Lógica de rotação do deck
+                        const usedSlot = card.slot;
+                        gameState.battleDeck.forEach(c => {
+                            if (c.id === gameState.selectedCardId) c.slot = 6;
+                            else if (c.slot > usedSlot) c.slot -= 1;
+                        });
+                        gameState.selectedCardId = null;
+                    }
+                }
+            }
+
+            if (currentScreen === 'CHEST_ANIMATION') {
+                if (!gameState.openingChestData) return;
+                gameState.openingChestData.step++;
+                gameState.openingChestData.shake = 10;
+                setTimeout(() => { if (gameState.openingChestData) gameState.openingChestData.shake = 0; }, 100);
+
+                if (gameState.openingChestData.step > gameState.openingChestData.rewards.length) {
+                    const data = gameState.openingChestData;
+                    playerData.gold += data.rewards[0].val;
+                    playerData.diamant += data.rewards[1].val;
+                    playerData.exp += data.rewards[2].val;
+                    checkLevelUp();
+                    playerData.chest.splice(data.chestIndex, 1);
+                    currentScreen = 'MAIN_MENU';
+                    gameState.openingChestData = null;
+                }
+            }
+        });
+
+        // --- FUNÇÃO PARA DESENHAR A TELA DE CARREGAMENTO ---
+        function drawLoadingScreen() {
+            // 1. Desenhar Fundo (Imagem ou cor caso falhe)
+            if (bgLoading.complete) {
+                ctx.drawImage(bgLoading, 0, 0, W, H);
+            } else {
+                ctx.fillStyle = '#001a33';
+                ctx.fillRect(0, 0, W, H);
+            }
+
+            // 2. Overlay escuro para destacar o texto
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.fillRect(0, 0, W, H);
+
+            // 3. Barra de Carregamento
+            const barW = 300;
+            const barH = 20;
+            const barX = (W - barW) / 2;
+            const barY = H * 0.75;
+
+            // Fundo da barra
+            ctx.fillStyle = '#333';
+            ctx.beginPath();
+            ctx.roundRect(barX, barY, barW, barH, 10);
+            ctx.fill();
+
+            // Progresso
+            ctx.fillStyle = COLORS.blue;
+            ctx.beginPath();
+            ctx.roundRect(barX, barY, barW * (loadingProgress / 100), barH, 10);
+            ctx.fill();
+
+            // Texto de Porcentagem
+            ctx.fillStyle = "white";
+            ctx.font = "bold 20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(`${Math.floor(loadingProgress)}%`, W / 2, barY - 10);
+
+            // 4. Botão Cancelar
+            const btnW = 160;
+            const btnH = 45;
+            const btnX = (W - btnW) / 2;
+            const btnY = barY + 60;
+
+            ctx.fillStyle = COLORS.red;
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(btnX, btnY, btnW, btnH, 10);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.fillStyle = "white";
+            ctx.font = "bold 18px Arial";
+            ctx.fillText("CANCELAR", W / 2, btnY + 28);
+
+            // Lógica de Progressão
+            if (loadingProgress < 100) {
+                loadingProgress += 0.8; // Velocidade do carregamento
+            } else {
+                initializeBattleDeck();
+                currentScreen = 'BATTLE'; // Transição ao chegar em 100%
+                lastTime = Date.now();
+            }
+        }
+
+        function getProcessedPlayerData() {
+            // Cálculo de XP (ex: cada nível precisa de level * 50 de exp)
+            const nextLevelExp = playerData.level * 100;
+            // Garante que a porcentagem não passe de 100% visualmente
+            const expPercentage = Math.min(playerData.exp / nextLevelExp, 1);
+
+            // Progresso de Treinamento (vitórias / 7)
+            const trainingProgress = playerData.wins / 7;
+
+            // --- VERIFICAÇÃO DA ARENA ---
+            // Se for 0, o nome é "TREINAMENTO", caso contrário, "ARENA " + o número
+            const arenaName = playerData.arena === 0 ? "TREINAMENTO" : "ARENA " + playerData.arena;
+
+            return {
+                ...playerData,
+                nextLevelExp,
+                expPercentage,
+                trainingProgress,
+                arenaName, // Novo campo processado
+                clanName: playerData.clan || 'SEM CLÃ',
+                chestSlots: Array.from({ length: 4 }, (_, i) => playerData.chest[i] || null)
+            };
+        }
+
+        function checkLevelUp() {
+            // Calculamos o XP necessário com base na mesma fórmula da UI
+            let nextLevelExp = playerData.level * 100;
+
+            // Enquanto o XP for maior que o necessário para o próximo nível
+            while (playerData.exp >= nextLevelExp) {
+                playerData.exp -= nextLevelExp; // Remove o XP usado para subir de nível
+                playerData.level++;             // Sobe o nível
+
+                // Atualiza o próximo limite (opcional: a dificuldade aumenta a cada nível)
+                nextLevelExp = playerData.level * 100;
+
+                console.log("LEVEL UP! Agora você está no nível " + playerData.level);
+                // Aqui você poderia adicionar sons ou efeitos visuais de level up
+            }
+        }
+
+        function updateChestTimers() {
+            const agora = Date.now();
+            const delta = (agora - lastTime) / 1000; // segundos que passaram
+
+            playerData.chest.forEach(bau => {
+                if (bau.status === 'OPENING') {
+                    bau.timer -= delta;
+                    if (bau.timer <= 0) {
+                        bau.timer = 0;
+                        bau.status = 'READY';
+                    }
+                }
+            });
+        }
+
+        function collectChest(index) {
+            const chest = playerData.chest[index];
+            if (chest.status !== 'READY') return;
+
+            // Calculamos as recompensas antecipadamente para a animação
+            const gold = Math.floor(Math.random() * 50) + 50;
+            const gems = Math.floor(Math.random() * 2) + 1;
+
+            // Iniciamos o estado da animação
+            gameState.openingChestData = {
+                step: 0, // 0: Baú fechado, 1: Ouro, 2: Gemas, 3: XP/Final
+                rewards: [
+                    { type: 'GOLD', val: gold, icon: '💰' },
+                    { type: 'GEMS', val: gems, icon: '💎' },
+                    { type: 'EXP', val: 15, icon: '✨' }
+                ],
+                chestIndex: index,
+                scale: 1,
+                shake: 0
+            };
+
+            currentScreen = 'CHEST_ANIMATION'; // Novo estado de tela
+        }
+
+        function drawChestOpening() {
+            drawMenuBackground();
+
+            // 2. Fundo escurecido (Overlay)
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(0, 0, W, H);
+
+            const centerX = W / 2;
+            const centerY = H / 2;
+
+            // Efeito de brilho atrás do baú
+            const gradient = ctx.createRadialGradient(centerX, centerY, 10, centerX, centerY, 180);
+            gradient.addColorStop(0, 'rgba(241, 196, 15, 0.4)');
+            gradient.addColorStop(1, 'transparent');
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 180, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 3. O Baú com animação (IMAGEM)
+            ctx.save();
+            let shakeX = (Math.random() - 0.5) * gameState.openingChestData.shake;
+            ctx.translate(centerX + shakeX, centerY + 20); // Ajuste leve na altura
+
+            // Escolhe a imagem: Fechado no step 0, Aberto nos outros
+            const chestImg = gameState.openingChestData.step === 0 ? imgChestClosed : imgChestOpen;
+            const chestSize = 200;
+
+            ctx.drawImage(chestImg, -chestSize / 2, -chestSize / 2, chestSize, chestSize);
+            ctx.restore();
+
+            // 4. Exibir Recompensa Atual (IMAGEM + TEXTO)
+            if (gameState.openingChestData.step > 0 && gameState.openingChestData.step <= gameState.openingChestData.rewards.length) {
+                const reward = gameState.openingChestData.rewards[gameState.openingChestData.step - 1];
+
+                // Seleciona a imagem correta baseada no tipo
+                let rewardImg;
+                if (reward.type === 'GOLD') rewardImg = imgGold;
+                else if (reward.type === 'GEMS') rewardImg = imgGems;
+                else if (reward.type === 'EXP') rewardImg = imgExp;
+
+                ctx.save();
+                // Animação de "pulo" flutuante
+                const bounce = Math.sin(Date.now() / 200) * 12;
+                ctx.translate(centerX, centerY - 140 + bounce);
+
+                // Desenha a imagem da recompensa
+                const itemSize = 100;
+                ctx.drawImage(rewardImg, -itemSize / 2, -itemSize / 2, itemSize, itemSize);
+
+                // Texto da recompensa (com contorno para destaque)
+                ctx.fillStyle = 'white';
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 5;
+                ctx.font = 'bold 34px Arial';
+                ctx.textAlign = 'center';
+                ctx.strokeText(`+${reward.val}`, 0, 90);
+                ctx.fillText(`+${reward.val}`, 0, 90);
+                ctx.restore();
+            }
+
+            // Instrução
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText("TOQUE PARA REVELAR", centerX, H - 100);
+        }
+
+        function drawMainMenu() {
+            const player = getProcessedPlayerData(); // Processa os dados antes de desenhar
+
+            drawMenuBackground();
+
+            // 3. Perfil (DINÂMICO)
+            ctx.textAlign = 'left';
+            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+            ctx.fillRect(0, 40, W, 60);
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Arial';
+            ctx.fillText('👤', 20, 80);
+            ctx.font = 'bold 16px Arial';
+            ctx.fillText(player.userName, 60, 65);
+            ctx.fillStyle = '#aaa';
+            ctx.font = '12px Arial';
+            ctx.fillText(player.clanName, 60, 85);
+            ctx.fillStyle = 'white';
+            ctx.font = '24px Arial';
+            ctx.fillText('⚙️', W - 45, 80);
+
+            // 4. Progresso de Treinamento (DINÂMICO)
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#4db8ff';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText('Progresso do treinamento', W / 2, 130);
+
+            // Barra de treino dinâmica
+            ctx.fillStyle = '#222';
+            ctx.beginPath(); ctx.roundRect(W / 2 - 100, 155, 200, 15, 8); ctx.fill();
+            ctx.fillStyle = '#4db8ff';
+            ctx.beginPath();
+            ctx.roundRect(W / 2 - 100, 155, 200 * player.trainingProgress, 15, 8); // Progresso real
+            ctx.fill();
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 10px Arial';
+            ctx.fillText(`${player.wins}/7`, W / 2, 166);
+            ctx.fillText('A prova Final', W / 2, 185);
+            ctx.fillStyle = '#f5d76e';
+            ctx.font = 'italic 11px Arial';
+            ctx.fillText('Só os lendários sobrevivem ao Caramelo Tank.', W / 2, 205);
+
+            // 5. Arena Preview (Centro)
+            const arenaY = 220;
+            ctx.fillStyle = '#4a3a2a';
+            ctx.beginPath(); ctx.roundRect(W / 2 - 110, arenaY, 220, 160, 15); ctx.fill();
+            ctx.fillStyle = '#5e9c3a'; // Gramado
+            ctx.beginPath(); ctx.roundRect(W / 2 - 105, arenaY - 15, 210, 150, 15); ctx.fill();
+            // Rio
+            ctx.fillStyle = COLORS.river;
+            ctx.fillRect(W / 2 - 10, arenaY - 15, 20, 150);
+            // Pontes
+            ctx.fillStyle = COLORS.bridge;
+            ctx.fillRect(W / 2 - 15, arenaY + 30, 30, 15);
+            ctx.fillRect(W / 2 - 15, arenaY + 80, 30, 15);
+            // Árvores e detalhes (simbólico)
+            ctx.font = '30px Arial';
+            ctx.fillText('🌲', W / 2 + 60, arenaY + 20);
+            ctx.fillText('🎯', W / 2 + 70, arenaY + 70);
+            ctx.fillText('🪵', W / 2 - 60, arenaY + 40);
+
+            // Título da Arena
+            ctx.fillStyle = '#2c3e50';
+            ctx.beginPath(); ctx.roundRect(W / 2 - 90, arenaY + 130, 180, 25, 5); ctx.fill();
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 14px Arial';
+            ctx.fillText(player.arenaName, W / 2, arenaY + 148);
+
+            // 6. Botão Batalla
+            const btn = buttons.battle;
+            // Sombra do botão
+            ctx.fillStyle = '#b8860b';
+            ctx.beginPath(); ctx.roundRect(btn.x, btn.y + 5, btn.w, btn.h, 10); ctx.fill();
+            // Corpo do botão
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 10); ctx.fill();
+            // Brilho superior
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+            ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h / 2, 10); ctx.fill();
+
+            ctx.fillStyle = 'white';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 4;
+            ctx.font = 'bold 24px Arial';
+            ctx.strokeText('Batalla', W / 2, btn.y + 42);
+            ctx.fillText('Batalha', W / 2, btn.y + 42);
+
+            // 7. Slots de Baús (DINÂMICO baseado no array de baús do jogador)
+            const slotW = 85;
+            const slotH = 110;
+            const slotY = 620;
+            const spacing = (W - (slotW * 4)) / 5;
+
+            player.chestSlots.forEach((bau, i) => {
+                let x = spacing + i * (slotW + spacing);
+
+                if (bau) {
+                    // Slot com baú existente
+                    ctx.fillStyle = bau.status === 'READY' ? '#2ecc71' : (bau.status === 'OPENING' ? '#f39c12' : '#f9e79f');
+                    ctx.beginPath(); ctx.roundRect(x, slotY, slotW, slotH, 5); ctx.fill();
+
+                    ctx.fillStyle = '#5d4037';
+                    ctx.font = 'bold 10px Arial';
+                    ctx.fillText(bau.name.toUpperCase(), x + slotW / 2, slotY + 20);
+
+                    // 3. Imagem do Baú (Centralizada)
+                    const cSize = 55;
+                    // Se o baú estiver pronto, podemos usar a imagem dele aberto ou apenas manter o fechado
+                    const imgParaExibir = bau.status === 'READY' ? imgChestOpen : imgChestClosed;
+
+                    ctx.drawImage(
+                        imgParaExibir,
+                        (x + slotW / 2) - (cSize / 2),
+                        slotY + 30,
+                        cSize,
+                        cSize
+                    );
+
+                    // LÓGICA DE TEXTO DINÂMICO
+                    ctx.fillStyle = 'black';
+                    ctx.font = 'bold 12px Arial';
+
+                    if (bau.status === 'WAITING') {
+                        ctx.fillText('ABRIR', x + slotW / 2, slotY + slotH - 10);
+                    } else if (bau.status === 'OPENING') {
+                        // Mostra o tempo restante (ex: 02:59)
+                        const minutes = Math.floor(bau.timer / 60);
+                        const seconds = Math.floor(bau.timer % 60);
+                        const timeStr = `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                        ctx.fillText(timeStr, x + slotW / 2, slotY + slotH - 10);
+
+                        // Mini barra de progresso
+                        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                        ctx.fillRect(x + 10, slotY + 75, slotW - 20, 4);
+                        ctx.fillStyle = 'white';
+                        ctx.fillRect(x + 10, slotY + 75, (slotW - 20) * (1 - bau.timer / bau.maxTime), 4);
+                    } else if (bau.status === 'READY') {
+                        ctx.fillStyle = 'white';
+                        ctx.fillText('COLETAR', x + slotW / 2, slotY + slotH - 10);
+                    }
+                } else {
+                    // Slot vazio
+                    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+                    ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+                    ctx.lineWidth = 2;
+                    ctx.beginPath(); ctx.roundRect(x, slotY, slotW, slotH, 5); ctx.fill(); ctx.stroke();
+                    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                    ctx.font = 'bold 11px Arial';
+                    ctx.fillText('Vazio', x + slotW / 2, slotY + slotH / 2);
+                }
+            });
+        }
+
+        // --- FUNÇÕES VISUAIS DA BATALHA ---
+        function drawArena() {
+            ctx.save(); ctx.translate(arenaMargin, arenaTop);
+            const tileSize = 36;
+            for (let y = 0; y < arenaH; y += tileSize) {
+                for (let x = 0; x < arenaW; x += tileSize) {
+                    ctx.fillStyle = ((Math.floor(x / tileSize) + Math.floor(y / tileSize)) % 2 === 0) ? COLORS.grass1 : COLORS.grass2;
+                    ctx.fillRect(x, y, tileSize, tileSize);
+                }
+            }
+            ctx.fillStyle = '#4a3a2a'; ctx.fillRect(0, arenaH / 2 - 15, arenaW, 30);
+            ctx.fillStyle = COLORS.river; ctx.fillRect(0, arenaH / 2 - 8, arenaW, 16);
+            ctx.fillStyle = 'rgba(210, 180, 140, 0.3)'; ctx.fillRect(arenaW * 0.15, 0, 50, arenaH); ctx.fillRect(arenaW * 0.85 - 50, 0, 50, arenaH);
+            drawBridge(arenaW * 0.15 - 5, arenaH / 2 - 20); drawBridge(arenaW * 0.85 - 45, arenaH / 2 - 20);
+            ctx.restore();
+        }
+
+        function drawBridge(x, y) {
+            ctx.fillStyle = COLORS.bridge; ctx.fillRect(x, y, 60, 40);
+            ctx.strokeStyle = '#5d2e0d'; ctx.lineWidth = 2; ctx.strokeRect(x, y, 60, 40);
+        }
+
+        function drawTower(x, y, team, isKing, level, hp, maxHp) {
+            const size = isKing ? 55 : 45;
+            ctx.save(); ctx.translate(x - size / 2, y - size / 2);
+            ctx.fillStyle = '#7f8c8d'; ctx.strokeStyle = '#2c3e50'; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.roundRect(0, 0, size, size, 8); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = COLORS.gold; ctx.beginPath();
+            ctx.moveTo(size / 2 - 8, -8); ctx.lineTo(size / 2 + 8, -8); ctx.lineTo(size / 2, 0); ctx.fill();
+            ctx.fillStyle = '#000'; ctx.font = "bold 10px Arial"; ctx.textAlign = "center"; ctx.fillText(level, size / 2, -10);
+            ctx.font = isKing ? "28px Arial" : "22px Arial"; ctx.fillText(isKing ? (team === 'red' ? '👹' : '🤴') : '🏰', size / 2, size / 2 + 8);
+
+            ctx.fillStyle = 'black'; ctx.fillRect(0, -20, size, 6);
+            ctx.fillStyle = team === 'blue' ? COLORS.blue : COLORS.red;
+            ctx.fillRect(0, -20, size * (Math.max(0, hp) / maxHp), 6);
+            ctx.restore();
+        }
+
+        function resetGameToMenu() {
+            // Volta para a tela inicial
+            currentScreen = 'MAIN_MENU';
+
+            // Reseta o estado da batalha
+            gamePhase = 'NORMAL';
+            gameState.elixir = 5;
+            gameState.timer = 180;
+            gameState.blueScore = 0;
+            gameState.redScore = 0;
+            gameState.selectedCardId = null;
+            troops = []; // Limpa as tropas da tela
+
+            // Reseta as torres
+            towers.forEach(t => {
+                t.hp = t.maxHp;
+                t.isDestroyed = false;
+            });
+        }
+
+        function drawEndScreen() {
+            const isVictory = gameState.blueScore > gameState.redScore;
+            const isDraw = gameState.blueScore === gameState.redScore;
+
+            if (isVictory == true) { playerData.wins + 1; }
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillRect(0, 0, W, H);
+
+            const gradient = ctx.createRadialGradient(W / 2, H / 3, 10, W / 2, H / 3, 300);
+            gradient.addColorStop(0, isVictory ? 'rgba(41, 128, 185, 0.6)' : (isDraw ? 'rgba(127, 140, 141, 0.6)' : 'rgba(192, 57, 43, 0.6)'));
+            gradient.addColorStop(1, 'transparent');
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, W, H);
+
+            ctx.textAlign = "center";
+            ctx.font = "bold 45px Arial Black";
+            ctx.lineWidth = 6;
+            ctx.strokeStyle = '#000';
+            ctx.fillStyle = isVictory ? '#FFD700' : (isDraw ? '#bdc3c7' : '#e74c3c');
+
+            const titleText = isVictory ? "VOCÊ MITOU!" : (isDraw ? "EMPATE" : "VIRALIZOU ERRADO!");
+            ctx.strokeText(titleText, W / 2, 180);
+            ctx.fillText(titleText, W / 2, 180);
+
+            ctx.font = "bold 50px Arial";
+            ctx.fillStyle = COLORS.blue;
+            ctx.strokeText(gameState.blueScore, W / 2 - 80, 280);
+            ctx.fillText(gameState.blueScore, W / 2 - 80, 280);
+            ctx.font = "30px Arial";
+            ctx.fillText("👑", W / 2 - 80, 325);
+
+            ctx.fillStyle = 'white';
+            ctx.font = "bold 40px Arial";
+            ctx.fillText("-", W / 2, 275);
+
+            ctx.font = "bold 50px Arial";
+            ctx.fillStyle = COLORS.red;
+            ctx.strokeText(gameState.redScore, W / 2 + 80, 280);
+            ctx.fillText(gameState.redScore, W / 2 + 80, 280);
+            ctx.font = "30px Arial";
+            ctx.fillText("👑", W / 2 + 80, 325);
+
+            const boxY = 400;
+            ctx.fillStyle = '#2c3e50';
+            ctx.strokeStyle = isVictory ? '#f1c40f' : '#7f8c8d';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.roundRect(40, boxY, W - 80, 180, 15);
+            ctx.fill(); ctx.stroke();
+
+            const moedas = gameState.lastReward ? gameState.lastReward.moedas : 0;
+            const totalCoroas = gameState.lastReward ? gameState.lastReward.coroas : 0;
+
+            ctx.fillStyle = "white";
+            ctx.font = "bold 18px Arial";
+            ctx.textAlign = "left";
+            ctx.fillText("Recompensas:", 60, boxY + 35);
+            ctx.font = "16px Arial";
+            ctx.fillText("👑 Coroas ganhas: " + totalCoroas, 60, boxY + 75);
+            ctx.fillStyle = '#f1c40f';
+            ctx.fillText("💰 Memecoins: +" + moedas, 60, boxY + 110);
+
+            if (isVictory) {
+                ctx.fillStyle = "#3498db";
+                ctx.fillText("📦 Caixa Misteriosa", 60, boxY + 145);
+            } else {
+                ctx.fillStyle = "#95a5a6";
+                ctx.fillText("❌ Sem caixa", 60, boxY + 145);
+            }
+
+            const btnY = H - 150;
+            const time = Date.now() / 300;
+            const scale = 1 + Math.sin(time) * 0.03;
+
+            ctx.save();
+            ctx.translate(W / 2, btnY);
+            ctx.scale(scale, scale);
+
+            ctx.fillStyle = '#3498db';
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 10;
+            ctx.beginPath();
+            ctx.roundRect(-80, -25, 160, 50, 10);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+
+            ctx.fillStyle = 'rgba(255,255,255,0.2)';
+            ctx.fillRect(-80, -25, 160, 20);
+
+            ctx.strokeStyle = isVictory ? '#f1c40f' : '#2980b9';
+            ctx.lineWidth = 3;
+            ctx.stroke();
+
+            ctx.fillStyle = 'white';
+            ctx.font = "bold 20px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText("OK", 0, 7);
+            ctx.restore();
+        }
+
+        function initializeBattleDeck() {
+            // 1. Copiamos as cartas e injetamos o custo real vindo do TROOP_STATS
+            let tempDeck = playerData.deck.map(card => {
+                // Busca o custo no TROOP_STATS usando o nome da carta
+                const realStats = TROOP_STATS[card.name];
+                return {
+                    ...card,
+                    // Se a tropa existir no stats, usa o custo de lá, senão mantém o original
+                    cost: realStats ? realStats.cost : card.cost
+                };
+            });
+
+            // 2. Algoritmo de Fisher-Yates (Embaralhamento)
+            for (let i = tempDeck.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [tempDeck[i], tempDeck[j]] = [tempDeck[j], tempDeck[i]];
+            }
+
+            // 3. Atribuímos os slots
+            tempDeck.forEach((card, index) => {
+                card.slot = index + 1;
+            });
+
+            gameState.battleDeck = tempDeck;
+            console.log(gameState);
+        }
+
+        function getDeckState() {
+            // Como agora usamos slots temporários na batalha, ordenamos eles
+            const sorted = [...gameState.battleDeck].sort((a, b) => a.slot - b.slot);
+
+            return {
+                hand: sorted.filter(c => c.slot <= 4),
+                next: sorted.find(c => c.slot === 5),
+                queue: sorted.find(c => c.slot === 6)
+            };
+        }
+
+        function drawUI() {
+            const deckState = getDeckState();
+
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillRect(0, 0, W, 70);
+            ctx.fillStyle = COLORS.gold; ctx.font = "bold 16px Arial"; ctx.textAlign = "left"; ctx.fillText("ARENA DOS MEMES", 20, 30);
+
+            const minutes = Math.floor(gameState.timer / 60);
+            const seconds = gameState.timer % 60;
+            const timeStr = `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+
+            ctx.fillStyle = (gamePhase === 'OVERTIME' || gamePhase === 'TIEBREAKER') ? 'rgba(200,0,0,0.8)' : 'rgba(0,0,0,0.8)';
+            ctx.beginPath(); ctx.roundRect(W - 90, 15, 70, 25, 12); ctx.fill();
+            ctx.fillStyle = "white"; ctx.font = "bold 14px Arial"; ctx.textAlign = "center"; ctx.fillText(timeStr, W - 55, 33);
+
+            if (gamePhase === 'OVERTIME') {
+                ctx.fillStyle = "#ff4757"; ctx.font = "10px Arial"; ctx.fillText("TRETA FINAL!", W / 2, 60);
+            } else if (gamePhase === 'TIEBREAKER') {
+                ctx.fillStyle = "#ff4757"; ctx.font = "12px Arial"; ctx.fillText("GUERRA DOS MEMES!", W / 2, 60);
+            }
+
+            drawCrownCounter(W - 55, 280, gameState.redScore, COLORS.red);
+            drawCrownCounter(W - 55, H - 435, gameState.blueScore, COLORS.blue);
+
+            ctx.fillStyle = COLORS.uiBg; ctx.fillRect(0, H - 160, W, 160);
+            const barX = 60, barY = H - 145, barW = W - 100;
+            ctx.fillStyle = '#222'; ctx.beginPath(); ctx.roundRect(barX, barY, barW, 20, 10); ctx.fill();
+            ctx.fillStyle = COLORS.elixir; ctx.beginPath(); ctx.roundRect(barX, barY, barW * (gameState.elixir / 10), 20, 10); ctx.fill();
+            ctx.fillStyle = "white"; ctx.font = "bold 16px Arial"; ctx.textAlign = "left"; ctx.fillText("💧 " + Math.floor(gameState.elixir), 15, barY + 16);
+
+            // 1. Desenhar a PRÓXIMA CARTA (Slot 5) - No canto esquerdo
+            if (deckState.next) {
+                drawCard(15, H - 95, deckState.next, true, false);
+            }
+
+            // 2. Desenhar a MÃO (Slots 1 a 4)
+            deckState.hand.forEach((card, i) => {
+                // i vai de 0 a 3. O slot original da carta define a posição na tela
+                // Para manter a posição fixa na tela mesmo quando as cartas rodam:
+                const posX = 85 + (i * 82);
+                const posY = H - 110;
+
+                // Verifica se esta carta específica é a selecionada
+                // Usamos o ID para comparar, já que o índice do array muda
+                const isSelected = gameState.selectedCardId === card.id;
+
+                drawCard(posX, posY, card, false, isSelected);
+            });
+        }
+
+        function drawCrownCounter(x, y, score, color) {
+            ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.strokeStyle = color; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.roundRect(x, y, 40, 50, 8); ctx.fill(); ctx.stroke();
+            ctx.fillStyle = "white"; ctx.font = "bold 20px Arial"; ctx.textAlign = "left"; ctx.fillText(score, x + 12, y + 25);
+            ctx.font = "14px Arial"; ctx.fillText("👑", x + 10, y + 43);
+        }
+
+        function drawCard(x, y, card, isSmall, isSelected) {
+            const w = isSmall ? 50 : 75, h = isSmall ? 65 : 100;
+            ctx.fillStyle = '#5d6d7e'; ctx.strokeStyle = isSelected ? COLORS.gold : 'white'; ctx.lineWidth = isSelected ? 4 : 2;
+            ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke(); ctx.lineWidth = 2;
+            ctx.fillStyle = '#8e44ad'; ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.fill();
+            ctx.fillStyle = 'white'; ctx.font = "bold 10px Arial"; ctx.textAlign = "left"; ctx.fillText(card.cost, x - 3, y + 4);
+            ctx.font = isSmall ? "22px Arial" : "36px Arial"; ctx.fillText(card.icon, x + w / 2 - (isSmall ? 11 : 18), y + h / 2 + (isSmall ? 8 : 12));
+        }
+
+        function drawDeckCard(x, y, w, h, card) {
+            // 1. Borda / Fundo da Raridade (Padrão Cinza/Prata para Comum)
+            // Se você tiver raridades depois, pode mudar a cor aqui dinamicamente
+            ctx.fillStyle = '#bdc3c7';
+            ctx.beginPath();
+            ctx.roundRect(x, y, w, h, 8); // Borda arredondada
+            ctx.fill();
+            ctx.strokeStyle = '#2c3e50';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // 2. Fundo interno (Cria o efeito de moldura)
+            ctx.fillStyle = '#ecf0f1';
+            ctx.beginPath();
+            ctx.roundRect(x + 4, y + 4, w - 8, h - 8, 5);
+            ctx.fill();
+
+            // 3. Ícone da Tropa (Centralizado)
+            ctx.fillStyle = 'black';
+            ctx.font = `${w * 0.4}px Arial`; // Tamanho do emoji baseado na largura da carta
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(card.icon, x + w / 2, y + h / 2 - 8);
+
+            // 4. Custo de Elixir (Gota rosa no topo esquerdo)
+            const realCost = (typeof TROOP_STATS !== 'undefined' && TROOP_STATS[card.name]) ? TROOP_STATS[card.name].cost : (card.cost || 1);
+
+            ctx.fillStyle = '#d630b8';
+            ctx.beginPath();
+            ctx.arc(x + 14, y + 14, 11, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 13px Arial';
+            ctx.fillText(realCost, x + 14, y + 15); // Número centralizado na gota
+
+            // 5. Faixa de Nível na Base da Carta
+            const level = card.level || 1; // Se não tiver nível, assume 1
+            const barHeight = 22;
+
+            // Desenha a faixa preta inferior
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.beginPath();
+            // Arredonda apenas os cantos inferiores para acompanhar a borda da carta
+            ctx.roundRect(x, y + h - barHeight, w, barHeight, [0, 0, 8, 8]);
+            ctx.fill();
+
+            // Texto do Nível
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 11px Arial';
+            ctx.fillText(`Lvl ${level}`, x + w / 2, y + h - 10);
+
+            // 6. Barrinha verde de Progresso (Cartas repetidas para Upgrade)
+            // Exemplo visual: simulando que a carta tem 50% do necessário para o próximo nível
+            const progressW = w - 12;
+            ctx.fillStyle = '#222';
+            ctx.fillRect(x + 6, y + h - 5, progressW, 3); // Fundo da barrinha
+            ctx.fillStyle = '#2ecc71'; // Verde brilhante
+            ctx.fillRect(x + 6, y + h - 5, progressW * 0.5, 3); // Progresso (50% de exemplo)
+        }
+
+        function drawMenuBackground() {
+            // 1. Fundo Quadriculado Azul (Mantendo sua lógica de tiles)
+            const tileSize = 45;
+            for (let y = 0; y < H; y += tileSize) {
+                for (let x = 0; x < W; x += tileSize) {
+                    ctx.fillStyle = ((Math.floor(x / tileSize) + Math.floor(y / tileSize)) % 2 === 0) ? COLORS.menuBg1 : COLORS.menuBg2;
+                    ctx.fillRect(x, y, tileSize, tileSize);
+                    ctx.strokeStyle = 'rgba(0,0,0,0.1)';
+                    ctx.strokeRect(x, y, tileSize, tileSize);
+                }
+            }
+        }
+
+        function drawTopBar() {
+            // 1. Fundo da Barra
+            ctx.fillStyle = '#0f171e';
+            ctx.fillRect(0, 0, W, 45); // Aumentei um pouco a altura para 45px para dar respiro
+
+            // --- SEÇÃO DE NÍVEL E XP ---
+            // Nível (Círculo Azul)
+            ctx.fillStyle = '#4db8ff';
+            ctx.beginPath();
+            ctx.arc(30, 22, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(playerData.level, 30, 28);
+
+            // Barra de XP (Fundo e Progresso)
+            const xpBarW = 80;
+            const xpPercentage = playerData.exp / (playerData.level * 500); // Exemplo de cálculo de %
+
+            ctx.fillStyle = '#222';
+            ctx.fillRect(55, 14, xpBarW, 16);
+            ctx.fillStyle = '#2196F3';
+            ctx.fillRect(55, 14, xpBarW * Math.min(1, xpPercentage), 16);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 9px Arial';
+            ctx.fillText(`${playerData.exp} XP`, 95, 26);
+
+            // --- SEÇÃO DE RECURSOS (MEMECOINS E GEMAS) ---
+            const iconSize = 22;
+            const topY = 11;
+
+            ctx.textAlign = 'right';
+            ctx.font = 'bold 15px Arial';
+
+            // Memecoins
+            ctx.fillStyle = 'white';
+            ctx.fillText(playerData.gold, W - 135, 29);
+            ctx.drawImage(imgGold, W - 130, topY, iconSize, iconSize);
+
+            // Gemas
+            ctx.fillText(playerData.diamant, W - 45, 29);
+            ctx.drawImage(imgGems, W - 40, topY, iconSize, iconSize);
+        }
+
+        function drawNavBar() {
+            ctx.fillStyle = '#1c2833';
+            ctx.fillRect(0, H - 70, W, 70);
+
+            const navIcons = ['🛒', '🃏', '⚔️', '🛡️', '📺'];
+            const navLabels = ['Loja', 'Deck', 'Batalha', 'Clã', 'Eventos'];
+            // Mapeamos qual tela corresponde a cada índice
+            const navScreens = ['SHOP_MENU', 'DECK_MENU', 'MAIN_MENU', 'CLAN_MENU', 'EVENTS_MENU'];
+            const navSpacing = W / 5;
+
+            ctx.textAlign = 'center'; // Garantir alinhamento central
+
+            for (let i = 0; i < 5; i++) {
+                let x = (i * navSpacing) + (navSpacing / 2);
+
+                // Agora o 'isSelected' depende da tela atual!
+                let isSelected = currentScreen === navScreens[i];
+
+                if (isSelected) {
+                    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+                    ctx.fillRect(i * navSpacing, H - 70, navSpacing, 70);
+
+                    // Uma barrinha colorida no topo do ícone selecionado (estilo Clash)
+                    ctx.fillStyle = '#f1c40f';
+                    ctx.fillRect(i * navSpacing + 10, H - 68, navSpacing - 20, 3);
+                }
+
+                ctx.fillStyle = isSelected ? 'white' : '#888';
+                ctx.font = '24px Arial';
+                ctx.fillText(navIcons[i], x, H - 35);
+                ctx.font = 'bold 10px Arial';
+                ctx.fillText(navLabels[i], x, H - 15);
+            }
+        }
+
+        function drawDeckEditor() {
+            drawMenuBackground(); // Fundo padrão azul/quadriculado
+            const cardW = 75;
+            const cardH = 95;
+
+            // --- 1. SEÇÃO DO DECK ATUAL (Fundo e Estilo) ---
+            const deckBoxY = 55;
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            ctx.beginPath();
+            ctx.roundRect(10, deckBoxY, W - 20, cardH * 3, 15); // Borda suave
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)'; // Linha de contorno sutil
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Título do Deck
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 18px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("DECK DE BATALHA", W / 2, deckBoxY + 25);
+
+            // --- 2. CÁLCULO E EXIBIÇÃO DO CUSTO MÉDIO DE ELIXIR ---
+            let totalElixir = 0;
+            playerData.deck.forEach(c => {
+                // Busca do TROOP_STATS se existir, senão usa o cost base
+                const realCost = (typeof TROOP_STATS !== 'undefined' && TROOP_STATS[c.name]) ? TROOP_STATS[c.name].cost : c.cost;
+                totalElixir += realCost;
+            });
+            const avgElixir = (totalElixir / 8).toFixed(1);
+
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(`Custo médio de Elixir: ${avgElixir}`, W / 2, deckBoxY + 49);
+
+            // --- 3. RENDERIZAR CARTAS DO DECK (Centralizadas matematicamente) ---
+            const gapX = 12;
+            const gapY = 15;
+
+            // Calcula o início do X para que o grid fique perfeitamente no centro da tela
+            const startX = (W - (4 * cardW + 3 * gapX)) / 2;
+            const startY = deckBoxY + 65;
+
+            playerData.deck.forEach((card, i) => {
+                const col = i % 4;
+                const row = Math.floor(i / 4);
+                const x = startX + col * (cardW + gapX);
+                const y = startY + row * (cardH + gapY);
+
+                // Feedback visual de seleção para troca
+                if (playerData.selectedCardToSwap === i) {
+                    ctx.shadowBlur = 15;
+                    ctx.shadowColor = '#f1c40f'; // Brilho Dourado
+                    ctx.strokeStyle = '#f1c40f';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(x - 2, y - 2, cardW + 4, cardH + 4);
+                    ctx.shadowBlur = 0; // Reseta o brilho
+                }
+                drawDeckCard(x, y, cardW, cardH, card);
+            });
+
+            // --- 4. TÍTULO DA COLEÇÃO DE CARTAS ---
+            const collectionHeaderY = deckBoxY + 295;
+
+            // Fundo da barra de título
+            ctx.fillStyle = '#1e3040';
+            ctx.fillRect(0, collectionHeaderY, W, 40);
+
+            // Sombra abaixo da barra para dar profundidade
+            ctx.fillStyle = 'rgba(0,0,0,0.3)';
+            ctx.fillRect(0, collectionHeaderY + 40, W, 4);
+
+            // Texto: Coleção de Cartas
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 15px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText("COLEÇÃO DE CARTAS", 15, collectionHeaderY + 25);
+
+            // Texto: X/Y Encontradas
+            ctx.fillStyle = '#8ce8ff'; // Azul claro
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'right';
+            const totalCartasDoJogo = 10; // Atualize esse número com o total de cartas do seu jogo
+            ctx.fillText(`${playerData.allCards.length}/${totalCartasDoJogo} Encontradas`, W - 15, collectionHeaderY + 24);
+
+            // --- 5. RENDERIZAR CARTAS DA COLEÇÃO ---
+            const collStartY = collectionHeaderY + 55;
+
+            playerData.allCards.forEach((card, i) => {
+                const col = i % 4;
+                const row = Math.floor(i / 4);
+                const x = startX + col * (cardW + gapX); // Usa o mesmo alinhamento X do deck
+                const y = collStartY + row * (cardH + gapY);
+
+                // Verifica se a carta já está no deck
+                const isUsed = playerData.deck.some(c => c.id === card.id);
+
+                if (isUsed) {
+                    ctx.globalAlpha = 0.5;
+                    ctx.filter = 'grayscale(80%)';
+                }
+
+                drawDeckCard(x, y, cardW, cardH, card);
+
+                // Desenha a etiqueta "EM USO" sobre a carta se ela estiver no deck
+                if (isUsed) {
+                    ctx.filter = 'none'; // Tira o filtro para o texto ficar nítido
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+                    ctx.fillRect(x, y + cardH / 2 - 10, cardW, 20);
+                    ctx.fillStyle = '#4db8ff';
+                    ctx.font = 'bold 10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText("EM USO", x + cardW / 2, y + cardH / 2 + 3);
+                }
+
+                ctx.globalAlpha = 1.0;
+                ctx.filter = 'none';
+            });
+        }
+
+        // --- NOVO LOOP PRINCIPAL COM SELEÇÃO DE TELA ---
+        function render() {
+            ctx.clearRect(0, 0, W, H);
+
+            // 1. TELAS DE TRANSIÇÃO OU JOGO (Ocupam a tela toda)
+            if (currentScreen === 'LOADING') {
+                drawLoadingScreen();
+            }
+            else if (currentScreen === 'CHEST_ANIMATION') {
+                drawChestOpening();
+            }
+            else if (currentScreen === 'BATTLE') {
+                updateGameLogic();
+                drawArena();
+
+                towers.forEach(t => {
+                    if (!t.isDestroyed) drawTower(t.x, t.y, t.team, t.isKing, t.level, t.hp, t.maxHp);
+                });
+
+                troops.forEach((t, index) => {
+                    t.update();
+                    t.draw();
+                    if (t.hp <= 0) troops.splice(index, 1);
+                });
+
+                drawUI();
+
+                if (gamePhase === 'END') {
+                    drawEndScreen();
+                }
+            }
+            // 2. TELAS DE MENU (Compartilham a NavBar)
+            else {
+                // Atualiza timers de baú em qualquer tela de menu
+                updateChestTimers();
+
+                if (currentScreen === 'MAIN_MENU') {
+                    drawMainMenu();
+                }
+                else if (currentScreen === 'DECK_MENU') {
+                    drawDeckEditor();
+                }
+                else if (currentScreen === 'SHOP_MENU' || currentScreen === 'CLAN_MENU' || currentScreen === 'EVENTS_MENU') {
+                    drawComingSoon(); // Função para telas ainda não implementadas
+                }
+
+                // --- 2. LÓGICA DO EFEITO DE TRANSIÇÃO (FADE) ---
+                if (transition.active) {
+                    if (transition.state === 'OUT') {
+                        transition.alpha += transition.speed;
+                        // Quando a tela escurecer totalmente, trocamos o conteúdo
+                        if (transition.alpha >= 1) {
+                            transition.alpha = 1;
+                            currentScreen = transition.nextScreen;
+                            transition.state = 'IN'; // Começa a clarear
+                        }
+                    } else if (transition.state === 'IN') {
+                        transition.alpha -= transition.speed;
+                        // Quando clarear totalmente, encerra o efeito
+                        if (transition.alpha <= 0) {
+                            transition.alpha = 0;
+                            transition.active = false;
+                        }
+                    }
+
+                    // Cortina: desenha um retângulo apenas na área de conteúdo
+                    // (Deixa a TopBar de 45px e a NavBar de 70px intactas)
+                    ctx.fillStyle = `rgba(15, 23, 30, ${transition.alpha})`; // #0f171e com transparência dinâmica
+                    ctx.fillRect(0, 45, W, H - 45 - 70);
+                }
+
+                // A NavBar é desenhada POR ÚLTIMO para sobrepor o conteúdo dos menus
+                drawNavBar();
+            }
+
+            // --- LÓGICA DA BARRA SUPERIOR (TOP BAR) ---
+            // Só desenha se a tela estiver na lista de permissão
+            const showTopBarOn = ['MAIN_MENU', 'DECK_MENU', 'SHOP_MENU'];
+            if (showTopBarOn.includes(currentScreen)) {
+                drawTopBar();
+            }
+
+            requestAnimationFrame(render);
+        }
+
+        // Dica: Função simples para as abas que você ainda vai criar
+        function drawComingSoon() {
+            drawMenuBackground(); // Reaproveita seu fundo quadriculado
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText("EM BREVE...", W / 2, H / 2);
+        }
+
+        render();
+    </script>
+</body>
+
+</html>
